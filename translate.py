@@ -1,4 +1,4 @@
-from synthesizer.inference import Synthesizer
+from synthesizer.inference import synthesizer
 from encoder import inference as encoder
 from vocoder import inference as vocoder
 from pathlib import Path
