@@ -1,4 +1,3 @@
-from utils.argutils import print_args
 from synthesizer.inference import Synthesizer
 from encoder import inference as encoder
 from vocoder import inference as vocoder
@@ -15,62 +14,45 @@ if __name__ == '__main__':
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
-    # remove this, should be hardcoded elsewhere
-    parser.add_argument("-e", "--enc_model_fpath", type=Path,default="encoder/saved_models/pretrained.pt",help="Path to a saved encoder")
-    parser.add_argument("-s", "--syn_model_dir", type=Path,default="synthesizer/saved_models/logs-pretrained/",help="Directory containing the synthesizer model")
-    parser.add_argument("-v", "--voc_model_fpath", type=Path,default="vocoder/saved_models/pretrained/pretrained.pt",help="Path to a saved vocoder")
-    # 
-
-    parser.add_argument("--out", type=Path,default="output.wav", help="sets the output wav file")
-    parser.add_argument("--textin", type=Path,help="sets the output wav file")
-    parser.add_argument("--voicein", type=Path,default="input.wav",  help="sets the input wav file")
+    parser.add_argument("-e", "--enc_model_fpath", type=Path, default="encoder/saved_models/pretrained.pt", help="Path to a saved encoder")
+    parser.add_argument("-s", "--syn_model_dir", type=Path, default="synthesizer/saved_models/logs-pretrained/", help="Directory containing the synthesizer model")
+    parser.add_argument("-v", "--voc_model_fpath", type=Path, default="vocoder/saved_models/pretrained/pretrained.pt", help="Path to a saved vocoder")
+    parser.add_argument("--out", type=Path, default="output.wav", help="sets the output wav file")
+    parser.add_argument("--textin", type=Path, help="sets the output wav file")
+    parser.add_argument("--voicein", type=Path, default="input.wav", help="sets the input wav file")
 
     args = parser.parse_args()
-    print_args(args, parser)
 
-    ## Print some environment information (for debugging purposes)
+    print(f"Arguments:\nEncoder model path: {args.enc_model_fpath}\nSynthesizer model directory: {args.syn_model_dir}\nVocoder model path: {args.voc_model_fpath}")
+    print(f"Output file: {args.out}\nText input file: {args.textin}\nVoice input file: {args.voicein}")
+    
+    ## Check for CUDA
     print("Running a test of your configuration...\n")
     if not torch.cuda.is_available():
-        print("Your PyTorch installation is not configured to use CUDA. If you have a GPU ready "
-              "for deep learning, ensure that the drivers are properly installed, and that your "
-              "CUDA version matches your PyTorch installation. CPU-only inference is currently "
-              "not supported.", file=sys.stderr)
+        print("Your PyTorch installation is not configured to use CUDA. If you have a GPU ready for deep learning, ensure that the drivers are properly installed, and that your CUDA version matches your PyTorch installation. CPU-only inference is currently not supported.", file=sys.stderr)
         quit(-1)
+    
     device_id = torch.cuda.current_device()
     gpu_properties = torch.cuda.get_device_properties(device_id)
-    print("Found %d GPUs available. Using GPU %d (%s) of compute capability %d.%d with "
-          "%.1fGb total memory.\n" % 
-          (torch.cuda.device_count(),
-           device_id,
-           gpu_properties.name,
-           gpu_properties.major,
-           gpu_properties.minor,
-           gpu_properties.total_memory / 1e9))
+    print(f"Found {torch.cuda.device_count()} GPUs available. Using GPU {device_id} ({gpu_properties.name}) with {gpu_properties.total_memory / 1e9}GB total memory.\n")
     
-    ## Load the models one by one.
-    print("Preparing the encoder, the synthesizer and the vocoder...")
+    ## Load models
+    print("Preparing the encoder, synthesizer, and vocoder...")
     encoder.load_model(args.enc_model_fpath)
     synthesizer = Synthesizer(args.syn_model_dir.joinpath("taco_pretrained"))
     vocoder.load_model(args.voc_model_fpath)
 
-    # ********************************
     if args.voicein:
-        print("args.voicein: ", args.voicein)
         in_fpath = args.voicein
     else:
-        # Get the reference audio filepath
         message = "Reference voice: enter an audio filepath of a voice to be cloned (mp3, wav, m4a, flac, ...):\n"
         in_fpath = Path(input(message).replace("\"", "").replace("\'", ""))
 
-    print("in_fpath: ", in_fpath)
+    print(f"Input voice file: {in_fpath}")
 
-    embeds = []
-    embeds.append(encoder.embed_utterance(encoder.preprocess_wav(in_fpath)))
-
-    print("Interactive generation loop")
+    embeds = [encoder.embed_utterance(encoder.preprocess_wav(in_fpath))]
 
     try:
-        ## Generating the spectrogram
         if args.textin:
             text = str(args.textin)
         else:
@@ -79,26 +61,17 @@ if __name__ == '__main__':
         texts = [text]
         specs = synthesizer.synthesize_spectrograms(texts, embeds)
         spec = specs[0]
-        print("Created the mel spectrogram")
-        
-        ## Generating the waveform
-        print("Synthesizing the waveform:")
+        print("Created mel spectrogram")
+
+        print("Synthesizing waveform:")
         generated_wav = vocoder.infer_waveform(spec)
 
-        ## Post-generation
         generated_wav = np.pad(generated_wav, (0, synthesizer.sample_rate), mode="constant")
 
-        # Save it on the disk
-        if args.out:
-            fpath = args.out
-        else:
-            fpath = "output.wav"
+        output_file = args.out if args.out else "output.wav"
+        print(f"Saving output as {output_file}")
+        librosa.output.write_wav(output_file, generated_wav.astype(np.float32), synthesizer.sample_rate)
 
-        print("generated_wav.dtype: ", generated_wav.dtype)
-        librosa.output.write_wav(fpath, generated_wav.astype(np.float32), synthesizer.sample_rate)
-
-        print("\nSaved output as %s\n\n" % fpath)
-        
     except Exception as e:
-        print("Caught exception: %s" % repr(e))
+        print(f"Caught exception: {repr(e)}")
         print("Restarting\n")
